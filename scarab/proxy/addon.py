@@ -20,7 +20,7 @@ class ScarabAddon:
     def load(self, loader):
         """Converte la bypass_domains in ignore_hosts proxy-level"""
         bypass_domains = global_config.get_bypass_domains()
-        ignore_hosts = [f"^{domain.replace('.', '\.')}.*" for domain in bypass_domains]
+        ignore_hosts = [f"^{domain.replace('.', r'\.')}.*" for domain in bypass_domains]
         ctx.options.ignore_hosts = tuple(ignore_hosts)
         
         # Avvia il background daemon per monitorare ibernazione
