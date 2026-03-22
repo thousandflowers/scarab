@@ -1,0 +1,28 @@
+# Scarab Configuration
+# Modifica i valori in base al tuo ambiente
+
+[proxy]
+# Porta su cui mettersi in ascolto localmente
+port = 8080
+
+# Dimensione minima in MB oltre la quale intercettare
+threshold_mb = 100
+
+# Abilita il trasferimento automatico al Pi (false = chiedi sempre)
+auto_offload = false
+
+# Lista di domini da ignorare a livello TLS (es. Apple, WhatsApp) separati da virgola
+bypass_domains = apple.com,icloud.com,whatsapp.com
+
+[orchestrator]
+# Indirizzo del nodo principale (Raspberry Pi) via Tailscale o rete locale
+primary_node_url = http://pi-scarab:7800
+
+[downloader]
+# Modifica qui per la directory locale in caso di fallback
+local_downloads_dir = ~/Downloads/Scarab
+
+[notifier]
+# Argomenti per ntfy
+ntfy_topic = scarab_alerts
+ntfy_server = https://ntfy.sh

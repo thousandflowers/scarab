@@ -1,0 +1,57 @@
+version: '3.8'
+
+services:
+  aria2:
+    image: p3terx/aria2-pro
+    container_name: scarab-aria2
+    restart: unless-stopped
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - RPC_PORT=6800
+      - LISTEN_PORT=6888
+      - RPC_SECRET=${ARIA2_SECRET}
+    volumes:
+      - /var/scarab/downloads:/downloads
+      - /var/scarab/config/aria2:/config
+    ports:
+      - "6800:6800"
+
+  filebrowser:
+    image: filebrowser/filebrowser:latest
+    container_name: scarab-filebrowser
+    restart: unless-stopped
+    volumes:
+      - /var/scarab/downloads:/srv
+      - /var/scarab/config/filebrowser/filebrowser.db:/database/filebrowser.db
+      - /var/scarab/config/filebrowser/settings.json:/config/settings.json
+    ports:
+      - "8080:80"
+
+  ntfy:
+    image: binwiederhier/ntfy
+    container_name: scarab-ntfy
+    command: serve
+    restart: unless-stopped
+    ports:
+      - "2586:80"
+    volumes:
+      - /var/scarab/config/ntfy:/var/lib/ntfy
+
+  orchestrator:
+    # Per l'orchestrator monteremo il codice raw copiato da scarab su una python image
+    image: python:3.11-slim
+    container_name: scarab-orchestrator
+    restart: unless-stopped
+    working_dir: /app
+    volumes:
+      - /opt/scarab:/app
+      - /var/scarab/config/scarab.conf:/app/scarab.conf
+    env_file:
+      - .env
+    command: bash -c "pip install -e . && uvicorn scarab.orchestrator.server:app --host 0.0.0.0 --port 7800"
+    ports:
+      - "7800:7800"
+    depends_on:
+      - aria2
+      - ntfy
