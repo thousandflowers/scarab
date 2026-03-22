@@ -126,5 +126,5 @@ def cancel_job(job_id: str):
     try:
         aria2.cancel(job_id)
         return {"status": "cancelled"}
-    except Exception as e:
+    except Exception:
         raise HTTPException(status_code=404, detail="Job not found or already cancelled")

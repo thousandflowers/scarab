@@ -1,4 +1,3 @@
-import typing
 import aria2p
 import os
 import subprocess

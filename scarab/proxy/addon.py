@@ -1,5 +1,4 @@
 import asyncio
-import json
 import logging
 from mitmproxy import http, ctx
 from typing import Dict, Any
@@ -20,11 +19,16 @@ class ScarabAddon:
     def load(self, loader):
         """Converte la bypass_domains in ignore_hosts proxy-level"""
         bypass_domains = global_config.get_bypass_domains()
-        ignore_hosts = [f"^{domain.replace('.', r'\.')}.*" for domain in bypass_domains]
+        # Build regex patterns without backslash inside f-string (invalid on Python < 3.12)
+        escaped = [domain.replace(".", r"\.") for domain in bypass_domains]
+        ignore_hosts = [f"^{d}.*" for d in escaped]
         ctx.options.ignore_hosts = tuple(ignore_hosts)
         
-        # Avvia il background daemon per monitorare ibernazione
-        asyncio.create_task(sleep_detector())
+        # Schedule the sleep detector as an asyncio task.
+        # mitmproxy's load() is sync but runs inside an already-running loop,
+        # so we get the running loop and schedule the coroutine on it.
+        loop = asyncio.get_event_loop()
+        loop.create_task(sleep_detector())
 
     async def _ask_user(self, filename: str, size: int) -> bool:
         """Mostra un popup all'utente su macOS per chiedere se offlodare."""
@@ -76,7 +80,7 @@ class ScarabAddon:
             
         if do_offload:
             metadata = self._extract_metadata(flow)
-            ctx.log.warn(f"🚀 [SCARAB] Offloading {filename} ({size} bytes). Metadata extracted.")
+            ctx.log.warning(f"🚀 [SCARAB] Offloading {filename} ({size} bytes). Metadata extracted.")
             
             # Inseriamo un payload custom e blocchiamo il download originale qui
             flow.response.status_code = 403

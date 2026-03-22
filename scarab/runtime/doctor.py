@@ -31,12 +31,12 @@ def run_doctor():
     logger.info(f"Checking primary node reachability ({host})...")
     try:
         if sys_os == "Windows":
-            result = subprocess.run(
+            subprocess.run(
                 ["ping", "-n", "1", "-w", "1000", host],
                 check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE
             )
         else:
-            result = subprocess.run(
+            subprocess.run(
                 ["ping", "-c", "1", "-W", "1", host],
                 check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE
             )
