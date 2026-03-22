@@ -1,0 +1,8 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+scarab.egg-info/
+proxy_test.log
+.DS_Store
