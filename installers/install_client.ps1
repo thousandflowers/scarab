@@ -18,7 +18,7 @@ if (!(Test-Path $ScarabDir)) {
 python -m venv "$ScarabDir\venv"
 & "$ScarabDir\venv\Scripts\pip.exe" install --upgrade pip
 & "$ScarabDir\venv\Scripts\pip.exe" install mitmproxy httpx rich
-& "$ScarabDir\venv\Scripts\pip.exe" install -e ..
+& "$ScarabDir\venv\Scripts\pip.exe" install -e "$PSScriptRoot\.."
 
 Write-Host "[3/4] Scarab CLI installed."
 

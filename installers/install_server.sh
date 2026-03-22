@@ -20,8 +20,9 @@ setup_pi_linux() {
         echo "Installing Docker..."
         curl -fsSL https://get.docker.com | sh
     fi
+    DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
     mkdir -p /opt/scarab
-    cp -r ../* /opt/scarab/ || true
+    cp -r "$DIR/.."/* /opt/scarab/ || true
     cd /opt/scarab
     docker compose up -d
 }
@@ -37,8 +38,9 @@ setup_mac() {
     
     # We assume 'scarab' works if copied in PATH or via explicit pip install
     python3 -m venv ~/.scarab/venv
+    DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
     ~/.scarab/venv/bin/pip install mitmproxy fastapi uvicorn httpx rich aria2p
-    ~/.scarab/venv/bin/pip install -e ..
+    ~/.scarab/venv/bin/pip install -e "$DIR/.."
     
     echo "To start the server, run: ~/.scarab/venv/bin/scarab start"
 }

@@ -40,7 +40,7 @@ services:
 
   orchestrator:
     # Per l'orchestrator monteremo il codice raw copiato da scarab su una python image
-    image: python:3.11-slim
+    image: python:3.11
     container_name: scarab-orchestrator
     restart: unless-stopped
     working_dir: /app

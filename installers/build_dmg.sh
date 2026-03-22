@@ -8,8 +8,17 @@ if ! command -v create-dmg &> /dev/null; then
     exit 1
 fi
 
-mkdir -p dist/Scarab.app/Contents/MacOS
-cp ../scarab/cli.py dist/Scarab.app/Contents/MacOS/scarab
+mkdir -p dist/Scarab.app/Contents/MacOS/lib
+# Copia l'intero pacchetto scarab per evitare ModuleNotFoundError
+cp -r ../scarab dist/Scarab.app/Contents/MacOS/lib/scarab
+
+# Crea un wrapper bash di entrypoint
+cat << 'EOF' > dist/Scarab.app/Contents/MacOS/scarab
+#!/bin/bash
+DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
+export PYTHONPATH="$DIR/lib"
+exec python3 -m scarab.cli start
+EOF
 chmod +x dist/Scarab.app/Contents/MacOS/scarab
 
 create-dmg \
