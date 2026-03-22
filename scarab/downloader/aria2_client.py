@@ -1,89 +1,97 @@
-import aria2p
-import os
-import subprocess
-import time
-import logging
+# scarab/downloader/aria2_client.py
+import httpx
+import asyncio
+from dataclasses import dataclass
+from enum import Enum
+from scarab.setup.dependencies import get_aria2_token, ARIA2_DOWNLOADS
 
-logger = logging.getLogger(__name__)
+ARIA2_RPC = "http://localhost:6800/jsonrpc"
 
-class Aria2Client:
-    def __init__(self, host: str = "http://localhost", port: int = 6800, secret: str = ""):
-        self.host = host
-        self.port = port
-        self.secret = secret
-        self.api = aria2p.API(
-            aria2p.Client(
-                host=host,
-                port=port,
-                secret=secret
-            )
+class JobStatus(Enum):
+    QUEUED      = "waiting"
+    DOWNLOADING = "active"
+    COMPLETE    = "complete"
+    ERROR       = "error"
+    PAUSED      = "paused"
+
+@dataclass
+class DownloadJob:
+    gid: str
+    filename: str
+    status: JobStatus
+    progress_pct: float
+    speed_mbps: float
+    total_bytes: int
+    completed_bytes: int
+
+def _rpc(method: str, params: list) -> dict:
+    payload = {
+        "jsonrpc": "2.0",
+        "method": method,
+        "id": "scarab",
+        "params": [f"token:{get_aria2_token()}"] + params
+    }
+    try:
+        r = httpx.post(ARIA2_RPC, json=payload, timeout=10)
+        r.raise_for_status()
+        data = r.json()
+        if "error" in data:
+            raise RuntimeError(f"aria2: {data['error']['message']}")
+        return data.get("result")
+    except httpx.ConnectError:
+        raise RuntimeError(
+            "aria2 is not responding. "
+            "Run 'scarab start' to launch Scarab."
         )
-        
-    def _is_running(self) -> bool:
-        try:
-            # Semplice heartbeat
-            self.api.get_global_stat()
-            return True
-        except Exception:
-            return False
-            
-    def ensure_running(self, download_dir: str):
-        if self._is_running():
-            return
-            
-        logger.info("Avvio aria2c in background...")
-        os.makedirs(download_dir, exist_ok=True)
-        
-        args = [
-            "aria2c",
-            "--enable-rpc",
-            f"--rpc-listen-port={self.port}",
-            "--rpc-allow-origin-all",
-            "--daemon=true",
-            f"--dir={download_dir}",
-            "--max-connection-per-server=4",
-            "--split=4"
-        ]
-        if self.secret:
-            args.append(f"--rpc-secret={self.secret}")
-            
-        subprocess.run(args, check=True)
-        time.sleep(1) # wait for startup
-        
-    def add_download(self, url: str, filename: str = None, headers: dict = None) -> str:
-        options = {}
-        if filename:
-            options["out"] = filename
-            
-        header_list = []
-        if headers:
-            for k, v in headers.items():
-                if v:
-                    header_list.append(f"{k}: {v}")
-        if header_list:
-            options["header"] = header_list
-            
-        download = self.api.add_uris([url], options=options)
-        return download.gid
-        
-    def get_status(self, gid: str) -> dict:
-        try:
-            d = self.api.get_download(gid)
-            return {
-                "gid": d.gid,
-                "status": d.status,
-                "progress_pct": d.progress if d.total_length > 0 else 0,
-                "download_speed_kbps": d.download_speed / 1024,
-                "total_mb": d.total_length / (1024 * 1024) if d.total_length > 0 else 0,
-                "completed_mb": d.completed_length / (1024 * 1024),
-                "error_message": d.error_message
-            }
-        except Exception as e:
-            return {"status": "error", "error_message": str(e)}
-            
-    def cancel(self, gid: str):
-        try:
-            d = self.api.get_download(gid)
-            self.api.remove([d])
-        except Exception:
-            pass
+
+def add_download(url: str, filename: str = None) -> str:
+    """Adds a download to aria2. Returns the GID."""
+    options = {"dir": str(ARIA2_DOWNLOADS)}
+    if filename:
+        options["out"] = filename
+    return _rpc("aria2.addUri", [[url], options])
+
+def get_job_status(gid: str) -> DownloadJob:
+    keys = ["gid", "status", "totalLength",
+            "completedLength", "downloadSpeed", "files"]
+    r = _rpc("aria2.tellStatus", [gid, keys])
+
+    total     = int(r.get("totalLength", 0))
+    completed = int(r.get("completedLength", 0))
+    speed     = int(r.get("downloadSpeed", 0))
+    progress  = (completed / total * 100) if total > 0 else 0.0
+    files     = r.get("files", [{}])
+    path      = files[0].get("path", "") if files else ""
+    filename  = path.split("/")[-1] if path else "file"
+
+    return DownloadJob(
+        gid=gid,
+        filename=filename,
+        status=JobStatus(r.get("status", "waiting")),
+        progress_pct=round(progress, 1),
+        speed_mbps=round(speed / 1_000_000, 2),
+        total_bytes=total,
+        completed_bytes=completed,
+    )
+
+def cancel_download(gid: str) -> bool:
+    try:
+        _rpc("aria2.remove", [gid])
+        return True
+    except Exception:
+        return False
+
+async def wait_for_completion(gid: str, on_progress=None) -> DownloadJob:
+    """
+    Polls until the download completes or fails.
+    Calls on_progress(job) every 2 seconds if provided.
+    """
+    while True:
+        job = get_job_status(gid)
+        if on_progress:
+            on_progress(job)
+        if job.status == JobStatus.COMPLETE:
+            return job
+        if job.status == JobStatus.ERROR:
+            raise RuntimeError(f"Download failed: {job.filename}")
+        await asyncio.sleep(2)

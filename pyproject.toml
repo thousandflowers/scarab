@@ -7,21 +7,22 @@ name = "scarab"
 version = "0.1.0"
 dependencies = [
     "mitmproxy>=10.0",
-    "aria2p",
     "fastapi",
     "uvicorn[standard]",
     "apscheduler>=3.10",
     "httpx",
     "rich",
     "psutil",
-    "rumps"
+    "rumps",
+    "tomli-w",
+    "click"
 ]
 
 [tool.setuptools.packages.find]
 include = ["scarab*"]
 
 [project.scripts]
-scarab = "scarab.cli:main"
+scarab = "scarab.cli:cli"
 
 [tool.black]
 line-length = 88

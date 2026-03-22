@@ -1,16 +1,89 @@
 import asyncio
 import logging
+import threading
+import time
 from mitmproxy import http, ctx
-from typing import Dict, Any
 
 from scarab.proxy.inspector import Inspector, OffloadDecision
-from scarab.config import global_config
-from scarab.core.remote_handler import handle_offload
+from scarab import config as cfg
 from scarab.core.sleep_handler import sleep_detector
 from scarab.logger import setup_logging
+from scarab.downloader.aria2_client import add_download, wait_for_completion
+from scarab.notifier.ntfy_client import (
+    notify_started, notify_complete, notify_error, notify_fallback
+)
 
 setup_logging()
 logger = logging.getLogger(__name__)
+
+RETRY_SECONDS = 30
+
+def offload(url: str, filename: str, size_bytes: int):
+    """
+    Offloads a download to aria2.
+    Runs in a separate thread so the proxy stays responsive.
+
+    Fallback logic:
+    - Tries to reach aria2 for up to RETRY_SECONDS
+    - If unreachable: sends a single notification, lets download proceed normally
+    - Never blocks the user
+    """
+    def run():
+        size_mb = size_bytes / 1_000_000
+        start   = time.time()
+
+        # Check aria2 is reachable before killing the browser download
+        if not _wait_for_aria2(RETRY_SECONDS):
+            notify_fallback(filename)
+            # Do not kill the flow — let the browser download normally
+            return
+
+        try:
+            notify_started(filename, size_mb)
+            print(f"\n[scarab] 🪲 {filename} ({size_mb:.0f} MB)")
+
+            gid = add_download(url, filename=filename)
+
+            def show_progress(job):
+                filled = int(job.progress_pct / 5)
+                bar    = "█" * filled + "░" * (20 - filled)
+                print(
+                    f"\r[scarab] [{bar}] "
+                    f"{job.progress_pct:.1f}% "
+                    f"@ {job.speed_mbps:.1f} MB/s",
+                    end="", flush=True,
+                )
+
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(
+                wait_for_completion(gid, on_progress=show_progress)
+            )
+
+            duration = int(time.time() - start)
+            print(f"\n[scarab] ✅ {filename} — done in {duration}s")
+            notify_complete(filename, duration)
+
+        except Exception as e:
+            print(f"\n[scarab] ❌ {filename}: {e}")
+            notify_error(filename, str(e))
+
+    threading.Thread(target=run, daemon=True).start()
+
+def _wait_for_aria2(timeout_sec: int) -> bool:
+    """
+    Waits up to timeout_sec for aria2 to be reachable.
+    Returns True if aria2 responds, False if timeout exceeded.
+    """
+    import httpx
+    deadline = time.time() + timeout_sec
+    while time.time() < deadline:
+        try:
+            httpx.get("http://localhost:6800/jsonrpc", timeout=2)
+            return True
+        except Exception:
+            time.sleep(2)
+    return False
 
 class ScarabAddon:
     def __init__(self):
@@ -18,15 +91,17 @@ class ScarabAddon:
         
     def load(self, loader):
         """Converte la bypass_domains in ignore_hosts proxy-level"""
-        bypass_domains = global_config.get_bypass_domains()
-        # Build regex patterns without backslash inside f-string (invalid on Python < 3.12)
+        val = cfg.get("proxy.bypass_domains")
+        if not val:
+            bypass_domains = ["apple.com", "icloud.com", "whatsapp.com"]
+        else:
+            bypass_domains = [d.strip() for d in val.split(",") if d.strip()]
+            
         escaped = [domain.replace(".", r"\.") for domain in bypass_domains]
         ignore_hosts = [f"^{d}.*" for d in escaped]
         ctx.options.ignore_hosts = tuple(ignore_hosts)
         
-        # Schedule the sleep detector as an asyncio task.
-        # mitmproxy's load() is sync but runs inside an already-running loop,
-        # so we get the running loop and schedule the coroutine on it.
+        # Schedule the sleep detector as an asyncio task
         loop = asyncio.get_event_loop()
         loop.create_task(sleep_detector())
 
@@ -52,23 +127,12 @@ class ScarabAddon:
             return True
         return False
 
-    def _extract_metadata(self, flow: http.HTTPFlow) -> Dict[str, Any]:
-        req_headers = flow.request.headers
-        return {
-            "url": flow.request.url,
-            "cookie": req_headers.get("Cookie", ""),
-            "user_agent": req_headers.get("User-Agent", ""),
-            "authorization": req_headers.get("Authorization", ""),
-            "method": flow.request.method,
-        }
-
     async def responseheaders(self, flow: http.HTTPFlow):
-        """Intercettiamo la risposta appena ricevuti gli header, PRIMA di scaricare il body."""
+        """Intercettiamo la risposta appena ricevuti gli header."""
         request_url = flow.request.url
         decision, size, filename = self.inspector.inspect_response(flow.response, request_url)
         
         if decision == OffloadDecision.PASSTHROUGH:
-            # Lascia scaricare in streaming per evitare di occupare RAM per file tollerabili
             flow.response.stream = True
             return
             
@@ -79,24 +143,20 @@ class ScarabAddon:
             do_offload = await self._ask_user(filename, size)
             
         if do_offload:
-            metadata = self._extract_metadata(flow)
-            ctx.log.warning(f"🚀 [SCARAB] Offloading {filename} ({size} bytes). Metadata extracted.")
+            # Scarab Phase 2 implementation:
+            # We don't change the request blocking right away unless aria2 is up.
+            # `offload` manages the verification. Actually, `PHASE_2.md` specifies
+            # that we must call offload and then flow.kill() ONLY if aria2 is reachable.
+            # Since `offload` runs in a thread and checks reachability, we must block here.
             
-            # Inseriamo un payload custom e blocchiamo il download originale qui
-            flow.response.status_code = 403
-            flow.response.headers["Content-Type"] = "text/html"
-            flow.response.stream = False # Non mandare in streaming questa finta
-            flow.response.content = b"<html><body><h1>Scarab Interceptor</h1><p>Il file &egrave; stato instradato a Scarab e arriver&agrave; a breve!</p></body></html>"
-            
-            # Invio al nodo remoto (Orchestrator) predefinito o fallback locale
-            headers_dict = {
-                "Cookie": metadata["cookie"],
-                "User-Agent": metadata["user_agent"],
-                "Authorization": metadata["authorization"]
-            }
-            asyncio.create_task(handle_offload(metadata["url"], filename, headers_dict, size))
+            # To strictly follow PHASE_2.md:
+            if _wait_for_aria2(2):  # Quick check before killing
+                offload(flow.request.pretty_url, filename, size)
+                flow.kill()
+            else:
+                notify_fallback(filename)
+                flow.response.stream = True
         else:
-            # L'utente ha rifiutato l'offload, il file prosegue normalmente in streaming
             flow.response.stream = True
 
 addons = [ScarabAddon()]
