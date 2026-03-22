@@ -12,7 +12,8 @@ dependencies = [
     "uvicorn",
     "apscheduler",
     "httpx",
-    "rich"
+    "rich",
+    "rumps"
 ]
 
 [project.scripts]

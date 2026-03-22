@@ -8,9 +8,31 @@ from scarab.downloader.aria2_client import Aria2Client
 from scarab.config import global_config
 from scarab.notifier.ntfy_client import NtfyClient
 import asyncio
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 app = FastAPI(title="Scarab Orchestrator")
 aria2 = Aria2Client(secret=os.environ.get("ARIA2_SECRET", ""))
+scheduler = AsyncIOScheduler()
+
+async def check_disk_space():
+    total, used, free = shutil.disk_usage("/")
+    if (used / total) > 0.90:
+        ntfy = NtfyClient(server=global_config.get_ntfy_server(), topic=global_config.get_ntfy_topic())
+        ntfy.notify(
+            title="⚠️ Spazio disco critico",
+            message="Lo spazio disco del nodo Server ha superato il 90%!",
+            priority=4,
+            tags=["warning", "cd"]
+        )
+
+@app.on_event("startup")
+async def startup_event():
+    scheduler.add_job(check_disk_space, 'interval', minutes=60)
+    scheduler.start()
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    scheduler.shutdown()
 
 class JobRequest(BaseModel):
     url: str

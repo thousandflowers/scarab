@@ -18,6 +18,13 @@ class Config:
         if os.path.exists(self.config_path):
             self.parser.read(self.config_path)
 
+    def update(self, section: str, key: str, value: str):
+        if not self.parser.has_section(section):
+            self.parser.add_section(section)
+        self.parser.set(section, key, str(value))
+        with open(self.config_path, "w") as f:
+            self.parser.write(f)
+
     def get_proxy_port(self) -> int:
         return self.parser.getint("proxy", "port", fallback=DEFAULT_PORT)
 
