@@ -1,0 +1,2 @@
+[console_scripts]
+scarab = scarab.cli:main

@@ -1,0 +1,9 @@
+mitmproxy>=10.0
+aria2p
+fastapi
+uvicorn[standard]
+apscheduler>=3.10
+httpx
+rich
+psutil
+rumps

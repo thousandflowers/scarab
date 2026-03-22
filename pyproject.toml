@@ -9,12 +9,16 @@ dependencies = [
     "mitmproxy>=10.0",
     "aria2p",
     "fastapi",
-    "uvicorn",
-    "apscheduler",
+    "uvicorn[standard]",
+    "apscheduler>=3.10",
     "httpx",
     "rich",
+    "psutil",
     "rumps"
 ]
+
+[tool.setuptools.packages.find]
+include = ["scarab*"]
 
 [project.scripts]
 scarab = "scarab.cli:main"
